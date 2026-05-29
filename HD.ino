@@ -1,43 +1,43 @@
-#include <Adafruit_LiquidCrystal.h>
+#include "Waveshare_LCD1602.h"
 
-Adafruit_LiquidCrystal lcd(0);
+Waveshare_LCD1602 lcd(16, 2);
 
 // Pins
-const int PIR_PIN      = 2;
-const int GREEN_LED    = 5;
-const int RED_LED      = 6;
+const int PIR_PIN = 2;
+const int GREEN_LED = 5;
+const int RED_LED = 6;
 const int RESET_BUTTON = 7;
-const int BUZZER       = 8;
+const int BUZZER = 8;
 
 enum AlarmState { DISARMED, ARMED, TRIGGERED };
 AlarmState currentState = DISARMED;
 
-String        inputCommand  = "";
+String inputCommand = "";
 unsigned long lastBlinkTime = 0;
-bool          redBlinkState = false;
+bool redBlinkState = false;
 
 // PIR cooldown after reset
-bool          pirCooldownActive = false;
-unsigned long pirCooldownStart  = 0;
+bool pirCooldownActive = false;
+unsigned long pirCooldownStart = 0;
 const unsigned long PIR_COOLDOWN_MS = 3000;
 
 // Button: 5V -> D7, 10k to GND — press = HIGH
-bool          lastButtonReading = LOW;
-bool          buttonState       = LOW;
-unsigned long lastDebounceTime  = 0;
+bool lastButtonReading = LOW;
+bool buttonState = LOW;
+unsigned long lastDebounceTime = 0;
 const unsigned long DEBOUNCE_MS = 50;
 
 void showLCD(String line1, String line2) {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(line1);
+  lcd.send_string(line1.c_str());
   lcd.setCursor(0, 1);
-  lcd.print(line2);
+  lcd.send_string(line2.c_str());
 }
 
 String getStateName() {
   if (currentState == DISARMED) return "DISARMED";
-  if (currentState == ARMED)    return "ARMED";
+  if (currentState == ARMED) return "ARMED";
   return "TRIGGERED";
 }
 
@@ -85,7 +85,7 @@ void resetAlarm() {
     Serial.println("Alarm reset. Returning to ARMED. PIR ignored for 3s.");
     setArmedSilent();
     pirCooldownActive = true;
-    pirCooldownStart  = millis();
+    pirCooldownStart = millis();
   } else if (currentState == ARMED) {
     stopAlarmOutputs();
     digitalWrite(GREEN_LED, HIGH);
@@ -122,18 +122,18 @@ void testOutputs() {
   showLCD("TEST MODE", "LEDs + Buzzer");
 
   digitalWrite(GREEN_LED, HIGH); digitalWrite(RED_LED, LOW);
-  tone(BUZZER, 800);  delay(500);
-  digitalWrite(GREEN_LED, LOW);  digitalWrite(RED_LED, HIGH);
+  tone(BUZZER, 800); delay(500);
+  digitalWrite(GREEN_LED, LOW); digitalWrite(RED_LED, HIGH);
   tone(BUZZER, 1200); delay(500);
   digitalWrite(GREEN_LED, HIGH); digitalWrite(RED_LED, HIGH);
   tone(BUZZER, 1000); delay(500);
-  digitalWrite(GREEN_LED, LOW);  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, LOW); digitalWrite(RED_LED, LOW);
   noTone(BUZZER);
 
   Serial.println("Test complete.");
-  if      (currentState == DISARMED) setDisarmed();
-  else if (currentState == ARMED)    setArmed();
-  else                               setTriggered();
+  if (currentState == DISARMED) setDisarmed();
+  else if (currentState == ARMED) setArmed();
+  else setTriggered();
 }
 
 void handleCommand(String command) {
@@ -144,12 +144,12 @@ void handleCommand(String command) {
   Serial.print("Command: ");
   Serial.println(command);
 
-  if      (command == "ARM")    setArmed();
+  if (command == "ARM") setArmed();
   else if (command == "DISARM") setDisarmed();
   else if (command == "STATUS") printStatus();
-  else if (command == "TEST")   testOutputs();
-  else if (command == "RESET")  resetAlarm();
-  else if (command == "HELP")   printHelp();
+  else if (command == "TEST") testOutputs();
+  else if (command == "RESET") resetAlarm();
+  else if (command == "HELP") printHelp();
   else {
     Serial.print("Unknown: ");
     Serial.println(command);
@@ -170,8 +170,8 @@ void readSerialCommands() {
     String temp = inputCommand;
     temp.trim();
     temp.toUpperCase();
-    if (temp == "ARM"  || temp == "DISARM" || temp == "STATUS" ||
-        temp == "TEST" || temp == "RESET"  || temp == "HELP") {
+    if (temp == "ARM" || temp == "DISARM" || temp == "STATUS" ||
+        temp == "TEST" || temp == "RESET" || temp == "HELP") {
       handleCommand(temp);
       inputCommand = "";
     }
@@ -216,22 +216,21 @@ void maintainTriggeredAlarm() {
   if (currentState != TRIGGERED) return;
   tone(BUZZER, 1000);
   if (millis() - lastBlinkTime >= 300) {
-    lastBlinkTime  = millis();
-    redBlinkState  = !redBlinkState;
+    lastBlinkTime = millis();
+    redBlinkState = !redBlinkState;
     digitalWrite(RED_LED, redBlinkState);
   }
 }
 
 void setup() {
-  pinMode(PIR_PIN,      INPUT);
-  pinMode(GREEN_LED,    OUTPUT);
-  pinMode(RED_LED,      OUTPUT);
-  pinMode(BUZZER,       OUTPUT);
+  pinMode(PIR_PIN, INPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
   pinMode(RESET_BUTTON, INPUT);
 
   Serial.begin(9600);
-  lcd.begin(16, 2);
-  lcd.setBacklight(1);
+  lcd.init();
 
   showLCD("Motion Alarm", "Starting...");
   delay(1500);
