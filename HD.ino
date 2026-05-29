@@ -1,61 +1,44 @@
 #include <Adafruit_LiquidCrystal.h>
 
-// =====================================================
-// SIT111 3.8HD - Tinkercad Test Version
-// Smart Motion Detection Alarm System with Command Control
-// Commands: ARM, DISARM, STATUS, TEST, RESET, HELP
-// =====================================================
-
-// Tinkercad I2C LCD
 Adafruit_LiquidCrystal lcd(0);
 
-// -------------------- Pin setup --------------------
-const int PIR_PIN = 2;
-const int GREEN_LED = 5;
-const int RED_LED = 6;
+// Pins
+const int PIR_PIN      = 2;
+const int GREEN_LED    = 5;
+const int RED_LED      = 6;
 const int RESET_BUTTON = 7;
-const int BUZZER = 8;
+const int BUZZER       = 8;
 
-// -------------------- Alarm states --------------------
-enum AlarmState {
-  DISARMED,
-  ARMED,
-  TRIGGERED
-};
-
+enum AlarmState { DISARMED, ARMED, TRIGGERED };
 AlarmState currentState = DISARMED;
 
-// -------------------- Variables --------------------
-String inputCommand = "";
+String        inputCommand  = "";
 unsigned long lastBlinkTime = 0;
-bool redBlinkState = false;
+bool          redBlinkState = false;
 
-// =====================================================
-// LCD helper functions
-// =====================================================
+// PIR cooldown after reset
+bool          pirCooldownActive = false;
+unsigned long pirCooldownStart  = 0;
+const unsigned long PIR_COOLDOWN_MS = 3000;
+
+// Button: 5V -> D7, 10k to GND — press = HIGH
+bool          lastButtonReading = LOW;
+bool          buttonState       = LOW;
+unsigned long lastDebounceTime  = 0;
+const unsigned long DEBOUNCE_MS = 50;
 
 void showLCD(String line1, String line2) {
   lcd.clear();
-
   lcd.setCursor(0, 0);
   lcd.print(line1);
-
   lcd.setCursor(0, 1);
   lcd.print(line2);
 }
 
-// =====================================================
-// State helper functions
-// =====================================================
-
 String getStateName() {
-  if (currentState == DISARMED) {
-    return "DISARMED";
-  } else if (currentState == ARMED) {
-    return "ARMED";
-  } else {
-    return "TRIGGERED";
-  }
+  if (currentState == DISARMED) return "DISARMED";
+  if (currentState == ARMED)    return "ARMED";
+  return "TRIGGERED";
 }
 
 void stopAlarmOutputs() {
@@ -66,78 +49,71 @@ void stopAlarmOutputs() {
 
 void setDisarmed() {
   currentState = DISARMED;
-
   digitalWrite(GREEN_LED, LOW);
   stopAlarmOutputs();
-
   showLCD("System Status:", "DISARMED");
-
   Serial.println("System disarmed. Motion is ignored.");
 }
 
 void setArmed() {
   currentState = ARMED;
-
   digitalWrite(GREEN_LED, HIGH);
   stopAlarmOutputs();
-
   showLCD("System Status:", "ARMED");
-
   Serial.println("System armed. Monitoring for motion...");
+}
+
+// Silent — skips serial print, used inside resetAlarm()
+void setArmedSilent() {
+  currentState = ARMED;
+  digitalWrite(GREEN_LED, HIGH);
+  stopAlarmOutputs();
+  showLCD("System Status:", "ARMED");
 }
 
 void setTriggered() {
   currentState = TRIGGERED;
-
   digitalWrite(GREEN_LED, LOW);
   digitalWrite(RED_LED, HIGH);
   tone(BUZZER, 1000);
-
   showLCD("MOTION DETECTED", "Alarm Triggered");
-
   Serial.println("ALERT: Motion detected. Alarm triggered!");
 }
 
 void resetAlarm() {
   if (currentState == TRIGGERED) {
-    setArmed();
-    Serial.println("Alarm reset. System returned to ARMED mode.");
+    Serial.println("Alarm reset. Returning to ARMED. PIR ignored for 3s.");
+    setArmedSilent();
+    pirCooldownActive = true;
+    pirCooldownStart  = millis();
   } else if (currentState == ARMED) {
     stopAlarmOutputs();
     digitalWrite(GREEN_LED, HIGH);
     showLCD("System Status:", "ARMED");
-    Serial.println("System already armed. No triggered alarm to reset.");
+    Serial.println("Already armed. Nothing to reset.");
   } else {
     stopAlarmOutputs();
     showLCD("System Status:", "DISARMED");
-    Serial.println("System is disarmed. Reset completed.");
+    Serial.println("System disarmed. Reset done.");
   }
 }
 
 void printStatus() {
   Serial.print("STATUS: ");
   Serial.println(getStateName());
-
-  Serial.print("PIR reading: ");
-
-  if (digitalRead(PIR_PIN) == HIGH) {
-    Serial.println("MOTION DETECTED");
-  } else {
-    Serial.println("NO MOTION");
+  Serial.print("PIR: ");
+  Serial.println(digitalRead(PIR_PIN) == HIGH ? "MOTION" : "CLEAR");
+  if (pirCooldownActive) {
+    Serial.print("PIR cooldown: ");
+    Serial.print((PIR_COOLDOWN_MS - (millis() - pirCooldownStart)) / 1000);
+    Serial.println("s");
   }
-
   Serial.println();
 }
 
 void printHelp() {
   Serial.println();
-  Serial.println("Available commands:");
-  Serial.println("ARM     - Arm the motion alarm");
-  Serial.println("DISARM  - Disarm the alarm and stop outputs");
-  Serial.println("STATUS  - Show current alarm status");
-  Serial.println("TEST    - Test LEDs and buzzer");
-  Serial.println("RESET   - Reset triggered alarm back to armed mode");
-  Serial.println("HELP    - Show this command list");
+  Serial.println("Commands: ARM, DISARM, STATUS, TEST, RESET, HELP");
   Serial.println();
 }
 
@@ -145,162 +121,123 @@ void testOutputs() {
   Serial.println("Running output test...");
   showLCD("TEST MODE", "LEDs + Buzzer");
 
-  digitalWrite(GREEN_LED, HIGH);
-  digitalWrite(RED_LED, LOW);
-  tone(BUZZER, 800);
-  delay(500);
-
-  digitalWrite(GREEN_LED, LOW);
-  digitalWrite(RED_LED, HIGH);
-  tone(BUZZER, 1200);
-  delay(500);
-
-  digitalWrite(GREEN_LED, HIGH);
-  digitalWrite(RED_LED, HIGH);
-  tone(BUZZER, 1000);
-  delay(500);
-
-  digitalWrite(GREEN_LED, LOW);
-  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, HIGH); digitalWrite(RED_LED, LOW);
+  tone(BUZZER, 800);  delay(500);
+  digitalWrite(GREEN_LED, LOW);  digitalWrite(RED_LED, HIGH);
+  tone(BUZZER, 1200); delay(500);
+  digitalWrite(GREEN_LED, HIGH); digitalWrite(RED_LED, HIGH);
+  tone(BUZZER, 1000); delay(500);
+  digitalWrite(GREEN_LED, LOW);  digitalWrite(RED_LED, LOW);
   noTone(BUZZER);
 
-  Serial.println("Output test complete.");
-
-  if (currentState == DISARMED) {
-    setDisarmed();
-  } else if (currentState == ARMED) {
-    setArmed();
-  } else {
-    setTriggered();
-  }
+  Serial.println("Test complete.");
+  if      (currentState == DISARMED) setDisarmed();
+  else if (currentState == ARMED)    setArmed();
+  else                               setTriggered();
 }
-
-// =====================================================
-// Serial command handling
-// =====================================================
 
 void handleCommand(String command) {
   command.trim();
   command.toUpperCase();
+  if (command.length() == 0) return;
 
-  if (command.length() == 0) {
-    return;
-  }
-
-  Serial.print("Command received: ");
+  Serial.print("Command: ");
   Serial.println(command);
 
-  if (command == "ARM") {
-    setArmed();
-  } else if (command == "DISARM") {
-    setDisarmed();
-  } else if (command == "STATUS") {
-    printStatus();
-  } else if (command == "TEST") {
-    testOutputs();
-  } else if (command == "RESET") {
-    resetAlarm();
-  } else if (command == "HELP") {
-    printHelp();
-  } else {
-    Serial.print("Unknown command: ");
+  if      (command == "ARM")    setArmed();
+  else if (command == "DISARM") setDisarmed();
+  else if (command == "STATUS") printStatus();
+  else if (command == "TEST")   testOutputs();
+  else if (command == "RESET")  resetAlarm();
+  else if (command == "HELP")   printHelp();
+  else {
+    Serial.print("Unknown: ");
     Serial.println(command);
-    Serial.println("Type HELP for available commands.");
   }
 }
 
 void readSerialCommands() {
   while (Serial.available() > 0) {
-    char incomingChar = Serial.read();
-
-    if (incomingChar == '\n' || incomingChar == '\r') {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
       handleCommand(inputCommand);
       inputCommand = "";
     } else {
-      inputCommand += incomingChar;
+      inputCommand += c;
     }
 
-    // Tinkercad backup: process command once it matches a known command
+    // Tinkercad doesn't send newlines, so match as the string builds
     String temp = inputCommand;
     temp.trim();
     temp.toUpperCase();
-
-    if (temp == "ARM" || temp == "DISARM" || temp == "STATUS" ||
-        temp == "TEST" || temp == "RESET" || temp == "HELP") {
+    if (temp == "ARM"  || temp == "DISARM" || temp == "STATUS" ||
+        temp == "TEST" || temp == "RESET"  || temp == "HELP") {
       handleCommand(temp);
       inputCommand = "";
     }
   }
 }
 
-// =====================================================
-// Input checking
-// =====================================================
-
 void checkPIRSensor() {
-  if (currentState == ARMED) {
-    int motion = digitalRead(PIR_PIN);
-
-    if (motion == HIGH) {
-      setTriggered();
+  if (pirCooldownActive) {
+    if (millis() - pirCooldownStart >= PIR_COOLDOWN_MS) {
+      pirCooldownActive = false;
+      Serial.println("PIR cooldown ended. Monitoring resumed.");
+    } else {
+      return;
     }
+  }
+  if (currentState == ARMED && digitalRead(PIR_PIN) == HIGH) {
+    setTriggered();
   }
 }
 
 void checkResetButton() {
-  // INPUT_PULLUP logic:
-  // not pressed = HIGH
-  // pressed = LOW
-  if (digitalRead(RESET_BUTTON) == LOW) {
-    delay(50);
+  bool reading = digitalRead(RESET_BUTTON);
 
-    if (digitalRead(RESET_BUTTON) == LOW) {
-      Serial.println("Physical reset button pressed.");
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+  lastButtonReading = reading;
+
+  if ((millis() - lastDebounceTime) > DEBOUNCE_MS) {
+    if (buttonState == LOW && reading == HIGH) {
+      buttonState = HIGH;
+      Serial.println("Reset button pressed.");
       resetAlarm();
-
-      while (digitalRead(RESET_BUTTON) == LOW) {
-        delay(10);
-      }
+    }
+    if (buttonState == HIGH && reading == LOW) {
+      buttonState = LOW;
     }
   }
 }
 
 void maintainTriggeredAlarm() {
-  if (currentState == TRIGGERED) {
-    tone(BUZZER, 1000);
-
-    if (millis() - lastBlinkTime >= 300) {
-      lastBlinkTime = millis();
-      redBlinkState = !redBlinkState;
-      digitalWrite(RED_LED, redBlinkState);
-    }
+  if (currentState != TRIGGERED) return;
+  tone(BUZZER, 1000);
+  if (millis() - lastBlinkTime >= 300) {
+    lastBlinkTime  = millis();
+    redBlinkState  = !redBlinkState;
+    digitalWrite(RED_LED, redBlinkState);
   }
 }
 
-// =====================================================
-// Arduino setup and loop
-// =====================================================
-
 void setup() {
-  pinMode(PIR_PIN, INPUT);
-  pinMode(GREEN_LED, OUTPUT);
-  pinMode(RED_LED, OUTPUT);
-  pinMode(BUZZER, OUTPUT);
-  pinMode(RESET_BUTTON, INPUT_PULLUP);
+  pinMode(PIR_PIN,      INPUT);
+  pinMode(GREEN_LED,    OUTPUT);
+  pinMode(RED_LED,      OUTPUT);
+  pinMode(BUZZER,       OUTPUT);
+  pinMode(RESET_BUTTON, INPUT);
 
   Serial.begin(9600);
-
   lcd.begin(16, 2);
   lcd.setBacklight(1);
 
   showLCD("Motion Alarm", "Starting...");
   delay(1500);
-
   setDisarmed();
 
-  Serial.println();
-  Serial.println("Tinkercad Smart Motion Detection Alarm System Ready.");
-  Serial.println("Default state: DISARMED");
+  Serial.println("Alarm System Ready. Default: DISARMED");
   printHelp();
 }
 
